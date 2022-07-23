@@ -1,0 +1,94 @@
+import requests
+import json
+import pandas as pd
+import datetime as dt
+from heapq import nlargest
+from functools import reduce
+
+
+lst = ["ETH", "CAKE","LUNA", "DOT", "MANA", "SAND", "AVAX", "ALGO", "ATOM", "MATIC", "BNB", "SNX",
+       "THETA", "GRT", "LINK", "SHIB", "DOGE", "VET", "AXS", "SOL", "FIL", "TRX", "FTM", "FARM", 
+       "LTC", "ETC", "NEAR", "ALICE", "ICP", "EGLD", "OMG", "UNI", "ADA", "XRP", "ZEC", "QUICK",
+       "BAT", "ENJ", "GALA", "BTT", "1INCH", "SLP", "COMP", "ROSE", "ONT", "AAVE", "ANKR", "NEO", 
+       "XTZ", "WTC", "OCEAN", "IOTA", "IOTX", "COTI", "XLM", "QTUM", "AR", "MITH", "LINA", "BETA", 
+       "CELO", "ZIL", "HBAR", "GXS", "OGN", "ILV", "ALPHA", "RVN", "NU", "KAVA", "REEF", "SC", "SRM", 
+       "YGG", "AUDIO", "STORJ", "KEY", "ATA", "DODO", "POND", "CHZ", "YFI", "SUPER", "NKN", "INJ", 
+       "CVC", "EOS", "LRC", "ARPA", "LPT", "XVS", "KLAY", "CRV", "LTO", "MKR", "FTT", "ONE", "RNDR",
+       "FOR", "BICO","SYS", "CELR", "ALPACA", "BLZ", "DUSK", "KNC", "AKRO", "PERL", "PAXG", "DOCK", 
+       "MBOX", "BADGER", "ZRX", "DENT", "IDEX", "FIDA"]
+
+pair = "BTC"
+root_url = 'https://api.binance.com/api/v3/klines'
+interval = '1d'
+url = root_url + '?symbol=' + lst[0] + pair + '&interval=' + interval
+data = json.loads(requests.get(url).text)
+df = pd.DataFrame(data)
+df.columns = ['open_time',
+                  'o', 'h', 'l', 'c', 'v',
+                  'close_time', 'qav', 'num_trades',
+                  'taker_base_vol', 'taker_quote_vol', 'ignore']
+df.index = [dt.datetime.fromtimestamp(x/1000.0) for x in df.close_time]
+close_prices = df[['open_time', 'c']]
+for i in lst[1:]:
+    url = root_url + '?symbol=' + i + pair + '&interval=' + interval
+    data = json.loads(requests.get(url).text)   
+    if 'msg' in data:
+        pass
+    else:
+        df = pd.DataFrame(data)
+        df.columns = ['open_time',
+                      'o', 'h', 'l', 'c', 'v',
+                      'close_time', 'qav', 'num_trades',
+                      'taker_base_vol', 'taker_quote_vol', 'ignore']
+        df.index = [dt.datetime.fromtimestamp(x/1000.0) for x in df.close_time]
+        close_price = df['c']
+        close_prices[i] = close_price
+#close_prices.to_excel("output2.xlsx")
+
+# PARAMETERS
+# how many days' data we'll look at?
+lookback = 45
+# ignoring last x days' data
+last_days = 7
+# how many days will we hold the coins?
+holding_days = 7
+
+
+def rank_coins(df, lookback, last_days, holding_days):
+    weekly_returns = []
+    for i in range(0, len(df)-lookback+1, holding_days+1):
+        total = 0
+        returns = dict()
+        five_largest_dict = dict()
+        for col in close_prices.columns[1:]:
+            if type(close_prices[col][i]) == str:
+                momentum = (float(close_prices[col][lookback-1-last_days+i]) - float(close_prices[col][i])) / float(close_prices[col][i])
+                returns[col] = momentum
+            else:
+                returns[col] = -1
+        five_largest = nlargest(5, returns, key=returns.get)
+        for coin in five_largest:
+            five_largest_dict[coin] = returns[coin]
+        for coin in five_largest_dict:
+            weekly_return = (float(close_prices[coin][lookback+i+holding_days-1]) - float(close_prices[coin][lookback+i])) / float(close_prices[coin][lookback+i])
+            total += weekly_return
+        avg_weekly_return = total / 5
+        weekly_returns.append(avg_weekly_return)
+    return [weekly_returns, five_largest_dict]
+
+selected_coins = rank_coins(close_prices, lookback, last_days, holding_days)[1]
+wr = rank_coins(close_prices, lookback, last_days, holding_days)[0]
+
+def geom_returns(lst):    
+    lst = [i + 1 for i in lst]
+    prod = reduce(lambda x, y: x*y, lst)
+    geometric_return = prod ** (1/len(lst))
+    return geometric_return
+geometric_return = geom_returns(wr)
+print("Geometric average return is  " + "{:.2%}".format(geometric_return))
+
+returns = [i + 1 for i in wr]
+total = 1000
+for i in returns:
+    total *= i
+print("$1000 invested will be worth " + str(total))
