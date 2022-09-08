@@ -4,14 +4,15 @@ import pandas as pd
 import datetime as dt
 from heapq import nlargest
 from functools import reduce
+import numpy as np
+from scipy import stats
 
-
-lst = ["ETH", "CAKE","LUNA", "DOT", "MANA", "SAND", "AVAX", "ALGO", "ATOM", "MATIC", "BNB", "SNX",
+lst = ["ETH", "CAKE", "DOT", "MANA", "SAND", "AVAX", "ALGO", "ATOM", "MATIC", "BNB", "SNX",
        "THETA", "GRT", "LINK", "SHIB", "DOGE", "VET", "AXS", "SOL", "FIL", "TRX", "FTM", "FARM", 
        "LTC", "ETC", "NEAR", "ALICE", "ICP", "EGLD", "OMG", "UNI", "ADA", "XRP", "ZEC", "QUICK",
-       "BAT", "ENJ", "GALA", "BTT", "1INCH", "SLP", "COMP", "ROSE", "ONT", "AAVE", "ANKR", "NEO", 
+       "BAT", "ENJ", "GALA", "1INCH", "SLP", "COMP", "ROSE", "ONT", "AAVE", "ANKR", "NEO", 
        "XTZ", "WTC", "OCEAN", "IOTA", "IOTX", "COTI", "XLM", "QTUM", "AR", "MITH", "LINA", "BETA", 
-       "CELO", "ZIL", "HBAR", "GXS", "OGN", "ILV", "ALPHA", "RVN", "NU", "KAVA", "REEF", "SC", "SRM", 
+       "CELO", "ZIL", "HBAR", "OGN", "ILV", "ALPHA", "RVN", "NU", "KAVA", "REEF", "SC", "SRM", 
        "YGG", "AUDIO", "STORJ", "KEY", "ATA", "DODO", "POND", "CHZ", "YFI", "SUPER", "NKN", "INJ", 
        "CVC", "EOS", "LRC", "ARPA", "LPT", "XVS", "KLAY", "CRV", "LTO", "MKR", "FTT", "ONE", "RNDR",
        "FOR", "BICO","SYS", "CELR", "ALPACA", "BLZ", "DUSK", "KNC", "AKRO", "PERL", "PAXG", "DOCK", 
@@ -44,51 +45,101 @@ for i in lst[1:]:
         close_price = df['c']
         close_prices[i] = close_price
 #close_prices.to_excel("output2.xlsx")
+close_prices = close_prices.rename(columns={"c": "ETH"})
+close_prices = close_prices.apply(pd.to_numeric)
+# BTC price data
+btc_url = root_url + '?symbol=BTCUSDT&interval=' + interval
+btc_data = json.loads(requests.get(btc_url).text)
+df_btc = pd.DataFrame(btc_data)
+btc_price = df_btc[4]
+btc_price = btc_price.apply(pd.to_numeric)
 
 # PARAMETERS
 # how many days' data we'll look at?
-lookback = 45
+lookback = 49
 # ignoring last x days' data
-last_days = 7
+last_days = 14
 # how many days will we hold the coins?
 holding_days = 7
+# if BTC return is below the threshold over a given period, we hold BTC; otherwise, we buy altcoins
+threshold = 0.1
 
-
+"""
 def rank_coins(df, lookback, last_days, holding_days):
     weekly_returns = []
     for i in range(0, len(df)-lookback+1, holding_days+1):
         total = 0
         returns = dict()
         five_largest_dict = dict()
-        for col in close_prices.columns[1:]:
-            if type(close_prices[col][i]) == str:
-                momentum = (float(close_prices[col][lookback-1-last_days+i]) - float(close_prices[col][i])) / float(close_prices[col][i])
-                returns[col] = momentum
-            else:
-                returns[col] = -1
+        for col in df.columns[1:]:
+            momentum = (df[col][lookback-1-last_days+i] - df[col][i]) / df[col][i]
+            returns[col] = momentum
         five_largest = nlargest(5, returns, key=returns.get)
         for coin in five_largest:
             five_largest_dict[coin] = returns[coin]
         for coin in five_largest_dict:
-            weekly_return = (float(close_prices[coin][lookback+i+holding_days-1]) - float(close_prices[coin][lookback+i])) / float(close_prices[coin][lookback+i])
+            weekly_return = (df[coin][lookback+i+holding_days-1] - df[coin][lookback+i]) / df[coin][lookback+i]
             total += weekly_return
         avg_weekly_return = total / 5
         weekly_returns.append(avg_weekly_return)
     return [weekly_returns, five_largest_dict]
+"""
 
-selected_coins = rank_coins(close_prices, lookback, last_days, holding_days)[1]
-wr = rank_coins(close_prices, lookback, last_days, holding_days)[0]
+def slope(ts):
+    ts = ts.dropna()
+    x = np.arange(len(ts))
+    log_ts = np.log(ts)
+    slope, intercept, r_value, p_value, std_err = stats.linregress(x, log_ts)
+    annualized_slope = (np.power(np.exp(slope), 365) -1) *100
+    return annualized_slope * (r_value ** 2)
+
+
+def crypto_momentum(df, lookback, last_days, holding_days, threshold):
+    weekly_returns = []
+    for i in range(lookback, len(df)-lookback+1, holding_days):
+        if btc_price[i] / btc_price[i-lookback] - 1 > threshold:
+            total = 0
+            returns = dict()
+            five_largest_dict = dict()
+            for col in df.columns[1:]:
+                try:
+                    token_slope = slope(df[col][i-lookback:i-last_days])
+                    returns[col] = token_slope
+                except:
+                    pass
+            five_largest = nlargest(5, returns, key=returns.get)
+            #print(five_largest, i)
+            for coin in five_largest:
+                five_largest_dict[coin] = returns[coin]
+            for coin in five_largest_dict:
+                try:
+                    weekly_return = (df[coin][i+holding_days-1] - df[coin][i]) / df[coin][i]
+                    total += weekly_return
+                except:
+                    pass
+            avg_weekly_return = total / 5
+            weekly_returns.append(avg_weekly_return)
+        else:
+            avg_weekly_return = 0
+            weekly_returns.append(avg_weekly_return)
+    return [weekly_returns, five_largest_dict]
+
+wr = crypto_momentum(close_prices, lookback, last_days, holding_days, threshold)[0]
+selected_coins = crypto_momentum(close_prices, lookback, last_days, holding_days, threshold)[1]
+
+returns = [i + 1 for i in wr]
+
+total = 10000
+for i in returns:
+    total *= i
+print("$10000 invested will be worth " + str(total))
 
 def geom_returns(lst):    
     lst = [i + 1 for i in lst]
     prod = reduce(lambda x, y: x*y, lst)
-    geometric_return = prod ** (1/len(lst))
+    geometric_return = prod ** (1/len(lst)) - 1
     return geometric_return
 geometric_return = geom_returns(wr)
 print("Geometric average return is  " + "{:.2%}".format(geometric_return))
 
-returns = [i + 1 for i in wr]
-total = 1000
-for i in returns:
-    total *= i
-print("$1000 invested will be worth " + str(total))
+# close_prices.to_excel("cryptomom.xlsx")
