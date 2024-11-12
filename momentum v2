@@ -1,0 +1,93 @@
+import pandas as pd
+import numpy as np
+from scipy import stats
+from heapq import nlargest
+
+LONG_WINDOW = 100
+SHORT_WINDOW = 20
+NUMBER_OF_TOKENS = 10
+
+close_prices = pd.read_csv("usdt_price_data.csv")
+close_prices['timestamp'] = pd.to_datetime(close_prices['timestamp'])  # Convert to datetime if it's not already
+close_prices.set_index('timestamp', inplace=True)
+
+# PARAMETERS
+# how many days' data we'll look at?
+lookback = 90
+# ignoring last x days' data
+last_days = 0
+# how many days will we hold the coins?
+holding_days = 14
+# if BTC return is below the threshold over a given period, we hold BTC; otherwise, we buy altcoins
+threshold = 0.05
+
+btc_price = close_prices.iloc[:,0]
+long_ema = btc_price.ewm(span=LONG_WINDOW, adjust=False).mean()
+short_ema = btc_price.ewm(span=SHORT_WINDOW, adjust=False).mean()
+
+def slope(ts):
+    ts = ts.dropna()
+    x = np.arange(len(ts))
+    log_ts = np.log(ts)
+    slope, intercept, r_value, p_value, std_err = stats.linregress(x, log_ts)
+    annualized_slope = (np.power(np.exp(slope), 365) -1) *100
+    return annualized_slope * (r_value ** 2)
+
+def crypto_momentum(df, lookback, last_days, holding_days, threshold, commission = 0.001):
+    weekly_returns = []
+    for i in range(lookback, len(df)-lookback+1, holding_days):
+        if btc_price[i] / btc_price[i-lookback] - 1 > threshold:
+            total = 0
+            returns = dict()
+            for col in df.columns[2:]:
+                # the reason why we check for NaN values is that for some days several tokens don't have price data at Binance.
+                # So, even these tokens can have high momentum, we should exclude them because they aren't tradeable on those days.
+                if np.isnan(df[col][i]) == False:
+                    try:
+                        token_slope = slope(df[col][i-lookback:i-last_days])
+                        returns[col] = token_slope
+                    except:
+                        pass
+            five_largest = nlargest(NUMBER_OF_TOKENS, returns, key=returns.get)
+            for coin in five_largest:
+                try:
+                    weekly_return = (df[coin][i+holding_days-1] * (1-commission)) / (df[coin][i] * (1+commission)) - 1
+                    total += weekly_return
+                except:
+                    pass
+            avg_weekly_return = total / NUMBER_OF_TOKENS
+            weekly_returns.append(avg_weekly_return)
+        else:
+            avg_weekly_return = 0
+            weekly_returns.append(avg_weekly_return)
+    return [weekly_returns, five_largest]
+
+wr = crypto_momentum(close_prices, lookback, last_days, holding_days, threshold)[0]
+selected_coins = crypto_momentum(close_prices, lookback, last_days, holding_days, threshold)[1]
+wr = [x for x in wr if str(x) != 'nan']
+
+def geom_return(returns):
+    returns= [i + 1 for i in returns]
+    cumulative_returns = np.cumprod(returns)
+    geometric_return = cumulative_returns[-1] ** (1/len(cumulative_returns)) - 1
+    annualized_return = (1 + geometric_return) ** (365/holding_days) -1
+    return annualized_return
+annualized_return = geom_return(wr)
+print("Annual return is " + "{:.2%}".format(annualized_return))
+
+def benchmark_return(df, commission=0.001):
+    btc_return = df.iloc[:,0][-1] * (1 - commission) / (df.iloc[:,0][0] * (1 + commission)) - 1
+    annual_btc_return = (1 + btc_return) ** (365 / len(df)) - 1
+    return annual_btc_return
+annual_btc_return = benchmark_return(close_prices)
+print("Benchmark return is " + "{:.2%}".format(annual_btc_return))
+
+def calculate_max_drawdown(returns):
+    returns = [i+1 for i in returns]
+    cumulative_returns = np.cumprod(returns)
+    peak = np.maximum.accumulate(cumulative_returns)
+    drawdown = (cumulative_returns - peak) / peak
+    max_drawdown = np.min(drawdown)
+    return max_drawdown
+max_drawdown = calculate_max_drawdown(wr)
+print("Maximum Drawdown:", "{:.2%}".format(max_drawdown))
