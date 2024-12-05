@@ -19,7 +19,7 @@ LOOKBACK = 35
 # ignoring last x days' data
 LAST_DAYS = 0
 # how many days will we hold the coins?
-HOLDING_DAYS = 7
+HOLDING_DAYS = 14
 # if BTC return is below the threshold over a given period, we hold BTC; otherwise, we buy altcoins
 THRESHOLD = 0.00
 COMMISSION = 0.001
